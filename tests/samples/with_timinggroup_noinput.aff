@@ -1,0 +1,8 @@
+AudioOffset:0
+Title:timinggroup_noinput
+
+timinggroup(noinput_anglex100){
+  arc(1000,1200,0.00,1.00,s,0.00,1.00,0,none,false);
+};
+
+(1300,2);

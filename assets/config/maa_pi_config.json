@@ -1,0 +1,27 @@
+{
+    "resource": "Default",
+    "controller": "Android",
+    "adb": {
+        "adb_path": "D:/leidian/LDPlayer9/adb.exe",
+        "address": "emulator-5554",
+        "screencap": "64",
+        "input": "18446744073709551607",
+        "config": {
+            "extras": {
+                "ld": {
+                    "enable": true,
+                    "index": 0,
+                    "path": "D:/leidian/LDPlayer9",
+                    "pid": 8972
+                }
+            }
+        }
+    },
+    "task": [
+        {
+            "name": "SinglePlay",
+            "option": {},
+            "__key": "d2b94bc5-ecfd-45a6-aae6-3be991ef8d1c"
+        }
+    ]
+}

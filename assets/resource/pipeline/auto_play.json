@@ -1,0 +1,79 @@
+{
+  "SinglePlay": {
+    "recognition": "DirectHit",
+    "action": "DoNothing",
+    "next": [
+      "LoadChart"
+    ],
+    "timeout": 1000,
+    "on_error": [
+      "Finished"
+    ]
+  },
+  "LoadChart": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "PlaySong.LoadChart",
+    "custom_action_param": {
+      "chart_path": "tests/samples/test_steganography.aff"
+    },
+    "timeout": 10000,
+    "next": [
+      "FindStartOrRetry"
+    ],
+    "on_error": [
+      "Finished"
+    ]
+  },
+  "FindStartOrRetry": {
+    "recognition": "OCR",
+    "expected": [
+      "START",
+      "重试"
+    ],
+    "roi": [
+      0,
+      720,
+      2560,
+      720
+    ],
+    "threshold": 0.3,
+    "order_by": "Expected",
+    "action": "Click",
+    "timeout": 20000,
+    "rate_limit": 500,
+    "post_delay": 0,
+    "next": [
+      "ExecuteTouch"
+    ],
+    "on_error": [
+      "Finished"
+    ]
+  },
+  "ExecuteTouch": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "PlaySong.ExecuteTouch",
+    "custom_action_param": {
+      "fixed_delay_ms": 3620,
+      "user_offset_ms": 0,
+      "input_backend": "scrcpy",
+      "maa_wait_mode": "wait_each",
+      "loading_timeout_ms": 30000,
+      "debug_log": true,
+      "dry_run": false,
+      "skip_loading_detection": false
+    },
+    "timeout": 600000,
+    "next": [
+      "Finished"
+    ],
+    "on_error": [
+      "Finished"
+    ]
+  },
+  "Finished": {
+    "recognition": "DirectHit",
+    "action": "DoNothing"
+  }
+}

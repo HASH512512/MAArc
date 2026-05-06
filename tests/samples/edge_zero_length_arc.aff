@@ -1,0 +1,5 @@
+AudioOffset:0
+Title:edge_zero_length_arc
+
+arc(1000,1000,0.20,0.80,s,0.20,0.80,0,none,false);
+arc(1000,1400,0.80,0.20,s,0.80,0.20,0,none,false);

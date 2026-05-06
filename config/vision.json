@@ -1,0 +1,31 @@
+{
+  "ui_template_threshold": 0.1,
+  "ground_blue_ratio_threshold": 0.2,
+  "arc_color_ratio_threshold": 0.2,
+  "arc_logic_roi_half_x": 0.09999999999999991,
+  "arc_logic_roi_half_y": 0.09999999999999991,
+  "roi": {
+    "ui_left": [
+      0.045,
+      0.025,
+      0.13999999999999996,
+      0.145
+    ],
+    "ground": [
+      0.05,
+      0.715,
+      0.96,
+      0.844
+    ]
+  },
+  "stream": {
+    "max_fps": 120,
+    "bitrate_enabled": true,
+    "bitrate_mbps": 40
+  },
+  "debug": {
+    "overlay_enabled": true,
+    "overlay_detached": true,
+    "perf_log_on_success_only": false
+  }
+}

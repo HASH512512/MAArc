@@ -1,0 +1,36 @@
+{
+  "interface_version": 2,
+  "name": "MAArc",
+  "description": "MaaFramework wrapper for Arcaea auto play.",
+  "contact": "Local development build",
+  "license": "MIT",
+  "welcome": "MAArc uses MaaFramework for orchestration and the original arcaea-auto-play solver for touch event generation.",
+  "version": "0.1.0",
+  "controller": [
+    {
+      "name": "Android",
+      "type": "Adb",
+      "display_raw": true
+    }
+  ],
+  "resource": [
+    {
+      "name": "Default",
+      "path": [
+        "./resource"
+      ]
+    }
+  ],
+  "agent": {
+    "child_exec": "python",
+    "child_args": [
+      "../agent/main.py"
+    ]
+  },
+  "task": [
+    {
+      "name": "SinglePlay",
+      "entry": "SinglePlay"
+    }
+  ]
+}

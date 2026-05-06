@@ -1,0 +1,6 @@
+AudioOffset:0
+Title:basic_4k
+
+(1000,1);
+hold(1200,1600,2);
+arc(1400,2000,0.00,1.00,s,0.20,0.80,0,none,false);

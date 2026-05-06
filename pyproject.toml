@@ -1,0 +1,24 @@
+[project]
+name = "maarc"
+version = "0.1.0"
+description = "MaaFramework wrapper for arcaea-auto-play"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "av>=10.0.0",
+    "chart>=0.2.3",
+    "easing>=0.1.1",
+    "ipython>=9.10.1",
+    "keyboard>=0.13.5",
+    "numpy>=1.25.0",
+    "opencv-python>=4.10.0.84",
+    "pyside6>=6.9.2",
+    "pytest>=8.3.5",
+    "rich>=13.3.4",
+    "typing-extensions>=4.14.1",
+    "MaaFw",
+]
+
+[[tool.uv.index]]
+name = "ustc"
+url = "https://pypi.mirrors.ustc.edu.cn/simple/"

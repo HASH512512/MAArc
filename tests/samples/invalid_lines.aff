@@ -1,0 +1,6 @@
+AudioOffset:0
+Title:invalid_lines
+
+arc(1000,abc,0.0,1.0,s,0.0,1.0,0,none,false);
+this-is-invalid;
+(1200,3);

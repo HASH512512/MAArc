@@ -1,0 +1,4 @@
+AudioOffset:0
+Title:arctap
+
+arc(1000,1600,0.10,0.90,s,0.20,0.80,0,none,false)[arctap(1200),arctap(1500)];

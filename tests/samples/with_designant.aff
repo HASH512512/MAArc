@@ -1,0 +1,4 @@
+AudioOffset:0
+Title:designant
+
+arc(1000,1300,0.20,0.80,s,0.20,0.80,0,none,designant);
