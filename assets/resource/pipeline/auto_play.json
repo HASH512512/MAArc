@@ -2,6 +2,8 @@
   "SinglePlay": {
     "recognition": "DirectHit",
     "action": "DoNothing",
+    "pre_delay": 0,
+    "post_delay": 0,
     "next": [
       "LoadChart"
     ],
@@ -17,6 +19,8 @@
     "custom_action_param": {
       "chart_path": "tests/samples/test_steganography.aff"
     },
+    "pre_delay": 0,
+    "post_delay": 0,
     "timeout": 10000,
     "next": [
       "FindStartOrRetry"
@@ -33,13 +37,14 @@
     ],
     "roi": [
       0,
-      720,
-      2560,
-      720
+      0,
+      0,
+      0
     ],
     "threshold": 0.3,
     "order_by": "Expected",
     "action": "Click",
+    "pre_delay": 0,
     "timeout": 20000,
     "rate_limit": 500,
     "post_delay": 0,
@@ -58,12 +63,20 @@
       "fixed_delay_ms": 3620,
       "user_offset_ms": 0,
       "input_backend": "scrcpy",
-      "maa_wait_mode": "wait_each",
-      "loading_timeout_ms": 30000,
+      "maa_wait_mode": "none",
+      "start_detection_mode": "freeze_change",
+      "start_detection_delay_ms": 0,
+      "loading_timeout_ms": 10000,
       "debug_log": true,
-      "dry_run": false,
+      "trace_frames": true,
+      "trace_frame_scale": 0.5,
+      "trace_jpeg_quality": 80,
+      "trace_queue_size": 8,
+      "dry_run": true,
       "skip_loading_detection": false
     },
+    "pre_delay": 0,
+    "post_delay": 0,
     "timeout": 600000,
     "next": [
       "Finished"
@@ -75,5 +88,23 @@
   "Finished": {
     "recognition": "DirectHit",
     "action": "DoNothing"
+  },
+  "BenchmarkScreencap": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "PlaySong.BenchmarkScreencap",
+    "custom_action_param": {
+      "sample_count": 200,
+      "warmup_count": 10,
+      "sleep_ms": 0,
+      "debug_log": true
+    },
+    "timeout": 120000,
+    "next": [
+      "Finished"
+    ],
+    "on_error": [
+      "Finished"
+    ]
   }
 }

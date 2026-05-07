@@ -115,3 +115,63 @@ Compare these fields between backends:
 - first touch dispatch timestamp versus scheduled due time
 
 If Maa native input has large `call_duration_ms` or accumulating lateness, try `maa_wait_mode: "batch_tick"` and then `"none"` for comparison.
+
+## Start Detection Modes
+
+`ExecuteTouch.custom_action_param.start_detection_mode` supports two modes:
+
+```json
+"start_detection_mode": "zigzag"
+```
+
+Detects the Arcaea loading screen by its right-side bright/dark zigzag boundary. It triggers only after the loading boundary disappears for consecutive frames.
+
+```json
+"start_detection_mode": "freeze_change"
+```
+
+Does not detect semantic image features. After OCR clicks START/retry, it waits `start_detection_delay_ms`, confirms that the screen is visually still for several frames, then triggers at the first detected frame change.
+
+Suggested freeze-change test parameters:
+
+```json
+{
+  "start_detection_mode": "freeze_change",
+  "start_detection_delay_ms": 100,
+  "input_backend": "scrcpy",
+  "debug_log": true
+}
+```
+
+Compare `freeze_change_sample` and `loading_sample` records in `debug/timing/*.jsonl` to evaluate screenshot polling delay and detector processing cost.
+
+## Offline Loading Detector Test
+
+Put real loading screenshots under `tests/`, then run:
+
+```powershell
+python agent\smoke_loading_detector.py tests
+```
+
+Use one-frame confirmation for quick static screenshot checks:
+
+```powershell
+python agent\smoke_loading_detector.py tests --confirm-frames 1
+```
+
+Write JSONL metrics for later comparison:
+
+```powershell
+python agent\smoke_loading_detector.py tests --jsonl debug\loading_detector.jsonl
+```
+
+Important output fields:
+
+- `phase`: detector state after this screenshot.
+- `loading_seen`: this screenshot confirmed loading screen detection.
+- `triggered`: this screenshot detected loading end.
+- `metrics.brightness_ratio`: left/right brightness separation in the loading ROI.
+- `metrics.largest_area_ratio`: largest OTSU contour area in the loading ROI.
+- `metrics.changed_ratio`: frame difference ratio after entering monitoring.
+
+If no screenshot reaches `loading_seen: true`, lower `--min-contour-area-ratio`, lower `--min-turns`, or adjust `--roi`. If `loading_seen` works but `triggered` never appears, lower `--frame-diff-ratio-threshold` or provide a post-loading screenshot after loading screenshots.
