@@ -12,6 +12,9 @@ build/
 dist/
 *.egg-info/
 debug/timing/*.jsonl
+debug/frames/
+debug/state_trace/
+assets/debug/
 assets/resource/model/ocr/
 .DS_Store
 Thumbs.db
