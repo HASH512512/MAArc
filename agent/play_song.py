@@ -21,7 +21,7 @@ from autoplay.runtime.config_store import load_app_config
 from autoplay.solver import CoordConv, solve_chart_auto
 
 from loading_detector import FreezeChangeDetector, LoadingEndDetector
-from touch_backends import MaaTouchBackend, create_touch_backend
+from touch_backends import MaaTouchBackend, TouchBackend, create_touch_backend
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -635,14 +635,12 @@ def _set_high_thread_priority() -> None:
 
 
 def _dispatch_events(
-    context: Context,
+    backend: TouchBackend,
     target_start: float,
-    input_backend: str,
     maa_wait_mode: str,
     log_path: Path | None,
     trace_clock: TraceClock,
 ) -> None:
-    backend = create_touch_backend(input_backend, context, maa_wait_mode=maa_wait_mode)
     sorted_events = sorted(PLAY_CACHE.events_by_time.items())
     first_touch_logged = False
     timer_active = _enable_timer_resolution()
@@ -694,7 +692,6 @@ def _dispatch_events(
             if isinstance(backend, MaaTouchBackend):
                 backend.flush_tick()
     finally:
-        backend.close()
         _disable_timer_resolution(timer_active)
 
 
@@ -920,6 +917,52 @@ class ExecuteTouchAction(CustomAction):
                         "remaining_ms": remaining * 1000.0,
                     },
                 )
+            backend: TouchBackend | None = None
+            if not dry_run:
+                t_backend_init_begin = time.perf_counter()
+                if log_path is not None:
+                    _write_trace_jsonl(
+                        log_path,
+                        trace_clock,
+                        {
+                            "type": "touch_backend_init_begin",
+                            "backend": input_backend,
+                            "t_backend_init_begin": t_backend_init_begin,
+                        },
+                    )
+                if state_trace is not None:
+                    state_trace.event(
+                        "touch_backend_init_begin",
+                        timestamp=t_backend_init_begin,
+                        backend=input_backend,
+                    )
+                backend = create_touch_backend(input_backend, context, maa_wait_mode=maa_wait_mode)
+                t_backend_ready = time.perf_counter()
+                first_touch_target = target_start + PLAY_CACHE.first_tick_ms / 1000.0
+                remaining_after_backend = target_start - t_backend_ready
+                first_touch_remaining_after_backend = first_touch_target - t_backend_ready
+                backend_ready_payload = {
+                    "type": "touch_backend_ready",
+                    "backend": backend.name,
+                    "t_backend_init_begin": t_backend_init_begin,
+                    "t_backend_ready": t_backend_ready,
+                    "init_duration_ms": (t_backend_ready - t_backend_init_begin) * 1000.0,
+                    "remaining_ms": remaining_after_backend * 1000.0,
+                    "first_touch_remaining_ms": first_touch_remaining_after_backend * 1000.0,
+                }
+                if log_path is not None:
+                    _write_trace_jsonl(log_path, trace_clock, backend_ready_payload)
+                if state_trace is not None:
+                    state_trace.event(
+                        "touch_backend_ready",
+                        timestamp=t_backend_ready,
+                        backend=backend.name,
+                        init_duration_ms=backend_ready_payload["init_duration_ms"],
+                        remaining_ms=backend_ready_payload["remaining_ms"],
+                        first_touch_remaining_ms=backend_ready_payload["first_touch_remaining_ms"],
+                    )
+                remaining = remaining_after_backend
+
             if remaining > 0:
                 time.sleep(remaining)
             t_delay_sleep_end = time.perf_counter()
@@ -933,9 +976,11 @@ class ExecuteTouchAction(CustomAction):
                 if state_trace is not None:
                     state_trace.event("dry_run_dispatch_end")
             else:
+                if backend is None:
+                    raise RuntimeError("Touch backend was not initialized")
                 if state_trace is not None:
                     state_trace.event("touch_dispatch_started")
-                _dispatch_events(context, target_start, input_backend, maa_wait_mode, log_path, trace_clock)
+                _dispatch_events(backend, target_start, maa_wait_mode, log_path, trace_clock)
                 if state_trace is not None:
                     state_trace.event("touch_dispatch_finished")
             if frame_tracer is not None:
@@ -955,6 +1000,8 @@ class ExecuteTouchAction(CustomAction):
                 state_trace.event("execute_touch_failed", error=str(exc))
             return False
         finally:
+            if "backend" in locals() and backend is not None:
+                backend.close()
             if frame_tracer is not None:
                 frame_tracer.close()
 
