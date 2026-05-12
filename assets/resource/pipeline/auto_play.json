@@ -5,9 +5,27 @@
     "pre_delay": 0,
     "post_delay": 0,
     "next": [
-      "LoadChart"
+      "PrewarmTouch"
     ],
     "timeout": 1000,
+    "on_error": [
+      "Finished"
+    ]
+  },
+  "PrewarmTouch": {
+    "recognition": "DirectHit",
+    "action": "Custom",
+    "custom_action": "PlaySong.PrewarmTouch",
+    "custom_action_param": {
+      "input_backend": "scrcpy",
+      "maa_wait_mode": "none"
+    },
+    "pre_delay": 0,
+    "post_delay": 0,
+    "timeout": 30000,
+    "next": [
+      "LoadChart"
+    ],
     "on_error": [
       "Finished"
     ]
@@ -17,7 +35,7 @@
     "action": "Custom",
     "custom_action": "PlaySong.LoadChart",
     "custom_action_param": {
-      "chart_path": "tests/samples/test_steganography.aff"
+      "chart_path": "D:\\Games\\arcsap\\testify\\3.aff"
     },
     "pre_delay": 0,
     "post_delay": 0,
@@ -72,7 +90,7 @@
       "trace_frame_scale": 0.5,
       "trace_jpeg_quality": 80,
       "trace_queue_size": 8,
-      "dry_run": true,
+      "dry_run": false,
       "skip_loading_detection": false
     },
     "pre_delay": 0,

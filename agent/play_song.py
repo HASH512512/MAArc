@@ -38,9 +38,18 @@ class PlayCache:
     chart_path: Path | None = None
     tick_count: int = 0
     event_count: int = 0
+    calibration: dict[str, tuple[int, int]] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class TouchBackendCache:
+    backend: TouchBackend | None = None
+    name: str = ""
+    maa_wait_mode: str = ""
 
 
 PLAY_CACHE = PlayCache()
+TOUCH_BACKEND_CACHE = TouchBackendCache()
 
 
 def _parse_param(value: Any) -> dict[str, Any]:
@@ -71,16 +80,78 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _load_chart_events(chart_path: Path) -> PlayCache:
+def _calculate_chart_points(width: int, height: int) -> dict[str, tuple[int, int]]:
+    w = float(width)
+    h = float(height)
+    r = w / h
+    t = ((16.0 / 9.0) - r) / ((16.0 / 9.0) - (16.0 / 10.0))
+    top_y_norm = 0.4037 + 0.0185 * t
+    bottom_y_norm = 0.8398 - 0.0207 * t
+    if r >= 16.0 / 9.0:
+        top_half_norm = 0.0469 + 0.2893 / r
+        bottom_half_norm = 0.7407 / r
+    elif r >= 16.0 / 10.0:
+        top_half_norm = 0.2096 + 0.0140 * t
+        bottom_half_norm = 0.4169 + 0.0082 * t
+    else:
+        u = t - 1.0
+        top_half_norm = 0.2236 - 0.0035 * u
+        bottom_half_norm = 0.4252 + 0.0047 * u
+    return {
+        "top_left": (round((0.5 - top_half_norm) * w), round(top_y_norm * h)),
+        "bottom_left": (round((0.5 - bottom_half_norm) * w), round(bottom_y_norm * h)),
+        "top_right": (round((0.5 + top_half_norm) * w), round(top_y_norm * h)),
+        "bottom_right": (round((0.5 + bottom_half_norm) * w), round(bottom_y_norm * h)),
+    }
+
+
+def _resolution_from_value(value: Any) -> tuple[int, int] | None:
+    if isinstance(value, dict):
+        width = value.get("width") or value.get("w")
+        height = value.get("height") or value.get("h")
+        if width and height:
+            return int(width), int(height)
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return int(value[0]), int(value[1])
+    return None
+
+
+def _get_screen_resolution(context: Context) -> tuple[int, int] | None:
+    try:
+        resolution = _resolution_from_value(context.tasker.controller.resolution)
+        if resolution is not None:
+            return resolution
+    except Exception:
+        pass
+    try:
+        job = context.tasker.controller.post_screencap()
+        job.wait()
+        frame = context.tasker.controller.cached_image
+        if frame is not None:
+            height, width = frame.shape[:2]
+            return int(width), int(height)
+    except Exception:
+        pass
+    return None
+
+
+def _load_chart_events(chart_path: Path, calibration: dict[str, tuple[int, int]] | None = None) -> PlayCache:
     app_config = load_app_config()
     global_config = app_config.global_config
     content = _read_text(chart_path)
     chart = Chart.loads(content, designant_choice=global_config.designant_choice)
+    if calibration is None:
+        calibration = {
+            "bottom_left": global_config.bottom_left,
+            "top_left": global_config.top_left,
+            "top_right": global_config.top_right,
+            "bottom_right": global_config.bottom_right,
+        }
     converter = CoordConv(
-        global_config.bottom_left,
-        global_config.top_left,
-        global_config.top_right,
-        global_config.bottom_right,
+        calibration["bottom_left"],
+        calibration["top_left"],
+        calibration["top_right"],
+        calibration["bottom_right"],
     )
     events_by_time = solve_chart_auto(chart, converter)
     if not events_by_time:
@@ -93,6 +164,7 @@ def _load_chart_events(chart_path: Path) -> PlayCache:
         chart_path=chart_path,
         tick_count=len(events_by_time),
         event_count=event_count,
+        calibration=calibration,
     )
 
 
@@ -714,10 +786,70 @@ def _dry_run_dispatch(target_start: float, log_path: Path | None, trace_clock: T
         _write_trace_jsonl(log_path, trace_clock, payload)
 
 
+def _close_cached_touch_backend() -> None:
+    if TOUCH_BACKEND_CACHE.backend is not None:
+        try:
+            TOUCH_BACKEND_CACHE.backend.close()
+        finally:
+            TOUCH_BACKEND_CACHE.backend = None
+            TOUCH_BACKEND_CACHE.name = ""
+            TOUCH_BACKEND_CACHE.maa_wait_mode = ""
+
+
+def _take_cached_touch_backend(input_backend: str, maa_wait_mode: str) -> TouchBackend | None:
+    normalized = input_backend.strip().lower()
+    if (
+        TOUCH_BACKEND_CACHE.backend is not None
+        and TOUCH_BACKEND_CACHE.name == normalized
+        and TOUCH_BACKEND_CACHE.maa_wait_mode == maa_wait_mode
+    ):
+        backend = TOUCH_BACKEND_CACHE.backend
+        TOUCH_BACKEND_CACHE.backend = None
+        TOUCH_BACKEND_CACHE.name = ""
+        TOUCH_BACKEND_CACHE.maa_wait_mode = ""
+        return backend
+    _close_cached_touch_backend()
+    return None
+
+
+def _prewarm_touch_backend(context: Context, input_backend: str, maa_wait_mode: str) -> TouchBackend:
+    normalized = input_backend.strip().lower()
+    cached = _take_cached_touch_backend(normalized, maa_wait_mode)
+    if cached is not None:
+        TOUCH_BACKEND_CACHE.backend = cached
+        TOUCH_BACKEND_CACHE.name = normalized
+        TOUCH_BACKEND_CACHE.maa_wait_mode = maa_wait_mode
+        return cached
+    backend = create_touch_backend(normalized, context, maa_wait_mode=maa_wait_mode)
+    TOUCH_BACKEND_CACHE.backend = backend
+    TOUCH_BACKEND_CACHE.name = normalized
+    TOUCH_BACKEND_CACHE.maa_wait_mode = maa_wait_mode
+    return backend
+
+
+@AgentServer.custom_action("PlaySong.PrewarmTouch")
+class PrewarmTouchAction(CustomAction):
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        try:
+            params = _parse_param(argv.custom_action_param)
+            input_backend = str(params.get("input_backend", "scrcpy"))
+            maa_wait_mode = str(params.get("maa_wait_mode", "wait_each"))
+            t_begin = time.perf_counter()
+            backend = _prewarm_touch_backend(context, input_backend, maa_wait_mode)
+            t_ready = time.perf_counter()
+            print(
+                "[INFO] Touch backend prewarmed: "
+                f"backend={backend.name}, init_duration_ms={(t_ready - t_begin) * 1000.0:.2f}"
+            )
+            return True
+        except Exception as exc:
+            print(f"[ERROR] PlaySong.PrewarmTouch failed: {exc}")
+            return False
+
+
 @AgentServer.custom_action("PlaySong.LoadChart")
 class LoadChartAction(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
-        del context
         try:
             params = _parse_param(argv.custom_action_param)
             chart_param = params.get("chart_path")
@@ -728,16 +860,20 @@ class LoadChartAction(CustomAction):
             if not chart_path.is_file():
                 print(f"[ERROR] Chart file not found: {chart_path}")
                 return False
-            cache = _load_chart_events(chart_path)
+            resolution = _get_screen_resolution(context)
+            calibration = _calculate_chart_points(*resolution) if resolution is not None else None
+            cache = _load_chart_events(chart_path, calibration=calibration)
             PLAY_CACHE.events_by_time = cache.events_by_time
             PLAY_CACHE.first_tick_ms = cache.first_tick_ms
             PLAY_CACHE.chart_path = cache.chart_path
             PLAY_CACHE.tick_count = cache.tick_count
             PLAY_CACHE.event_count = cache.event_count
+            PLAY_CACHE.calibration = cache.calibration
             print(
                 "[INFO] Chart loaded: "
                 f"path={chart_path}, first_tick={cache.first_tick_ms}, "
-                f"ticks={cache.tick_count}, events={cache.event_count}"
+                f"ticks={cache.tick_count}, events={cache.event_count}, "
+                f"resolution={resolution}, calibration={cache.calibration}"
             )
             return True
         except Exception as exc:
@@ -809,6 +945,7 @@ class ExecuteTouchAction(CustomAction):
                     "execute_touch_enter",
                     timestamp=t_action_enter,
                     chart_path=str(PLAY_CACHE.chart_path),
+                    calibration=PLAY_CACHE.calibration,
                     first_tick_ms=PLAY_CACHE.first_tick_ms,
                     tick_count=PLAY_CACHE.tick_count,
                     event_count=PLAY_CACHE.event_count,
@@ -920,6 +1057,7 @@ class ExecuteTouchAction(CustomAction):
             backend: TouchBackend | None = None
             if not dry_run:
                 t_backend_init_begin = time.perf_counter()
+                backend = _take_cached_touch_backend(input_backend, maa_wait_mode)
                 if log_path is not None:
                     _write_trace_jsonl(
                         log_path,
@@ -927,6 +1065,7 @@ class ExecuteTouchAction(CustomAction):
                         {
                             "type": "touch_backend_init_begin",
                             "backend": input_backend,
+                            "cached": backend is not None,
                             "t_backend_init_begin": t_backend_init_begin,
                         },
                     )
@@ -935,8 +1074,10 @@ class ExecuteTouchAction(CustomAction):
                         "touch_backend_init_begin",
                         timestamp=t_backend_init_begin,
                         backend=input_backend,
+                        cached=backend is not None,
                     )
-                backend = create_touch_backend(input_backend, context, maa_wait_mode=maa_wait_mode)
+                if backend is None:
+                    backend = create_touch_backend(input_backend, context, maa_wait_mode=maa_wait_mode)
                 t_backend_ready = time.perf_counter()
                 first_touch_target = target_start + PLAY_CACHE.first_tick_ms / 1000.0
                 remaining_after_backend = target_start - t_backend_ready
@@ -944,6 +1085,7 @@ class ExecuteTouchAction(CustomAction):
                 backend_ready_payload = {
                     "type": "touch_backend_ready",
                     "backend": backend.name,
+                    "cached": (t_backend_ready - t_backend_init_begin) < 0.001,
                     "t_backend_init_begin": t_backend_init_begin,
                     "t_backend_ready": t_backend_ready,
                     "init_duration_ms": (t_backend_ready - t_backend_init_begin) * 1000.0,
