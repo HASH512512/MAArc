@@ -290,10 +290,12 @@ class FreezeChangeDetectorConfig:
     max_work_width: int = 480
     max_work_height: int = 480
     still_diff_ratio_threshold: float = 0.0015
+    anchor_still_diff_ratio_threshold: float = 0.0025
     change_diff_ratio_threshold: float = 0.010
     pixel_diff_threshold: int = 18
-    still_confirm_frames: int = 3
-    change_confirm_frames: int = 1
+    still_confirm_frames: int = 6
+    still_confirm_duration_ms: float = 150.0
+    change_confirm_frames: int = 2
 
 
 @dataclass(slots=True)
@@ -312,6 +314,11 @@ class FreezeChangeDetector:
         self.phase = FreezeChangePhase.WAITING_STILL
         self._previous_gray: np.ndarray | None = None
         self._previous_timestamp: float | None = None
+        self._still_anchor_gray: np.ndarray | None = None
+        self._still_anchor_timestamp: float | None = None
+        self._change_baseline_gray: np.ndarray | None = None
+        self._change_baseline_timestamp: float | None = None
+        self._first_change_timestamp: float | None = None
         self._still_count = 0
         self._change_count = 0
         self.estimated_change_timestamp: float | None = None
@@ -325,22 +332,70 @@ class FreezeChangeDetector:
             return FreezeChangeDetectorResult(
                 phase=self.phase,
                 timestamp=timestamp,
-                metrics={"diff_ratio": 0.0, "first_frame": 1},
+                metrics={
+                    "diff_ratio": 0.0,
+                    "first_frame": 1,
+                    "still_diff_ratio_threshold": self.config.still_diff_ratio_threshold,
+                    "anchor_still_diff_ratio_threshold": self.config.anchor_still_diff_ratio_threshold,
+                    "still_confirm_frames": self.config.still_confirm_frames,
+                    "still_confirm_duration_ms": self.config.still_confirm_duration_ms,
+                    "change_diff_ratio_threshold": self.config.change_diff_ratio_threshold,
+                    "change_confirm_frames": self.config.change_confirm_frames,
+                },
             )
 
         diff_ratio = self._diff_ratio(self._previous_gray, gray)
-        metrics = {
+        anchor_diff_ratio = None
+        if self._still_anchor_gray is not None:
+            anchor_diff_ratio = self._diff_ratio(self._still_anchor_gray, gray)
+        metrics: dict[str, float | int | str] = {
             "diff_ratio": diff_ratio,
             "still_count": self._still_count,
             "change_count": self._change_count,
+            "still_diff_ratio_threshold": self.config.still_diff_ratio_threshold,
+            "anchor_still_diff_ratio_threshold": self.config.anchor_still_diff_ratio_threshold,
+            "still_confirm_frames": self.config.still_confirm_frames,
+            "still_confirm_duration_ms": self.config.still_confirm_duration_ms,
+            "change_diff_ratio_threshold": self.config.change_diff_ratio_threshold,
+            "change_confirm_frames": self.config.change_confirm_frames,
         }
+        if anchor_diff_ratio is not None:
+            metrics["anchor_diff_ratio"] = anchor_diff_ratio
 
         if self.phase is FreezeChangePhase.WAITING_STILL:
             if diff_ratio <= self.config.still_diff_ratio_threshold:
+                if self._still_anchor_gray is None:
+                    self._still_anchor_gray = self._previous_gray.copy()
+                    self._still_anchor_timestamp = self._previous_timestamp
+                    anchor_diff_ratio = self._diff_ratio(self._still_anchor_gray, gray)
+                    metrics["anchor_diff_ratio"] = anchor_diff_ratio
+
+                anchor_still = (
+                    anchor_diff_ratio is not None
+                    and anchor_diff_ratio <= self.config.anchor_still_diff_ratio_threshold
+                )
                 self._still_count += 1
-                if self._still_count >= self.config.still_confirm_frames:
+                stable_duration_ms = 0.0
+                if self._still_anchor_timestamp is not None:
+                    stable_duration_ms = (timestamp - self._still_anchor_timestamp) * 1000.0
+                metrics["stable_duration_ms"] = stable_duration_ms
+                metrics["anchor_still"] = int(anchor_still)
+                metrics["still_frame_ready"] = int(
+                    self._still_count >= self.config.still_confirm_frames
+                )
+                metrics["still_duration_ready"] = int(
+                    stable_duration_ms >= self.config.still_confirm_duration_ms
+                )
+                if (
+                    anchor_still
+                    and self._still_count >= self.config.still_confirm_frames
+                    and stable_duration_ms >= self.config.still_confirm_duration_ms
+                ):
                     self.phase = FreezeChangePhase.WAITING_CHANGE
                     self._change_count = 0
+                    self._change_baseline_gray = gray.copy()
+                    self._change_baseline_timestamp = timestamp
+                    self._first_change_timestamp = None
                     self._previous_gray = gray
                     self._previous_timestamp = timestamp
                     metrics["still_seen"] = 1
@@ -352,15 +407,27 @@ class FreezeChangeDetector:
                     )
             else:
                 self._still_count = 0
+                self._still_anchor_gray = None
+                self._still_anchor_timestamp = None
 
         elif self.phase is FreezeChangePhase.WAITING_CHANGE:
-            if diff_ratio >= self.config.change_diff_ratio_threshold:
+            baseline_diff_ratio = diff_ratio
+            if self._change_baseline_gray is not None:
+                baseline_diff_ratio = self._diff_ratio(self._change_baseline_gray, gray)
+            metrics["baseline_diff_ratio"] = baseline_diff_ratio
+
+            if baseline_diff_ratio >= self.config.change_diff_ratio_threshold:
+                if self._change_count == 0:
+                    self._first_change_timestamp = timestamp
                 self._change_count += 1
+                metrics["change_count"] = self._change_count
                 if self._change_count >= self.config.change_confirm_frames:
                     self.phase = FreezeChangePhase.TRIGGERED
-                    previous = self._previous_timestamp
+                    previous = self._change_baseline_timestamp
                     self.estimated_change_timestamp = (
-                        timestamp if previous is None else (previous + timestamp) / 2.0
+                        self._first_change_timestamp
+                        if self._first_change_timestamp is not None
+                        else timestamp if previous is None else (previous + timestamp) / 2.0
                     )
                     self._previous_gray = gray
                     self._previous_timestamp = timestamp
@@ -374,6 +441,7 @@ class FreezeChangeDetector:
                     )
             else:
                 self._change_count = 0
+                self._first_change_timestamp = None
 
         self._previous_gray = gray
         self._previous_timestamp = timestamp

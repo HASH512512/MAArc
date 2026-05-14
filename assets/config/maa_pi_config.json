@@ -2,17 +2,16 @@
     "resource": "Default",
     "controller": "Android",
     "adb": {
-        "adb_path": "D:/leidian/LDPlayer9/adb.exe",
-        "address": "emulator-5554",
+        "adb_path": "D:/Program Files/Netease/MuMu/nx_main/adb.exe",
+        "address": "127.0.0.1:16416",
         "screencap": "64",
         "input": "18446744073709551607",
         "config": {
             "extras": {
-                "ld": {
+                "mumu": {
                     "enable": true,
-                    "index": 0,
-                    "path": "D:/leidian/LDPlayer9",
-                    "pid": 8972
+                    "index": 1,
+                    "path": "D:/Program Files/Netease/MuMu"
                 }
             }
         }
@@ -21,7 +20,7 @@
         {
             "name": "SinglePlay",
             "option": {},
-            "__key": "d2b94bc5-ecfd-45a6-aae6-3be991ef8d1c"
+            "__key": "b61e07cd-24f1-4256-b95e-1de6cf72eb4a"
         }
     ]
 }

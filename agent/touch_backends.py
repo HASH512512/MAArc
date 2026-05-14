@@ -104,10 +104,22 @@ class MaaTouchBackend:
 class ScrcpyTouchBackend:
     name = "scrcpy"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        adb_serial: str | None = None,
+        max_fps: int = 60,
+        video_bit_rate: int | None = None,
+        video_crop: tuple[int, int, int, int] | None = None,
+    ) -> None:
         from control import DeviceController
 
-        self.controller = DeviceController()
+        self.adb_serial = adb_serial
+        self.controller = DeviceController(
+            serial=adb_serial,
+            max_fps=max_fps,
+            video_bit_rate=video_bit_rate,
+            video_crop=video_crop,
+        )
         self._active_pointers: dict[int, tuple[int, int]] = {}
 
     def dispatch(self, event) -> dict[str, int | str | None]:
@@ -131,10 +143,23 @@ class ScrcpyTouchBackend:
         self.release_all()
 
 
-def create_touch_backend(name: str, context, maa_wait_mode: str = "wait_each") -> TouchBackend:
+def create_touch_backend(
+    name: str,
+    context,
+    maa_wait_mode: str = "wait_each",
+    adb_serial: str | None = None,
+    scrcpy_max_fps: int = 60,
+    scrcpy_video_bit_rate: int | None = None,
+    scrcpy_video_crop: tuple[int, int, int, int] | None = None,
+) -> TouchBackend:
     normalized = name.strip().lower()
     if normalized == "maa":
         return MaaTouchBackend(context.tasker.controller, wait_mode=maa_wait_mode)
     if normalized == "scrcpy":
-        return ScrcpyTouchBackend()
+        return ScrcpyTouchBackend(
+            adb_serial=adb_serial,
+            max_fps=scrcpy_max_fps,
+            video_bit_rate=scrcpy_video_bit_rate,
+            video_crop=scrcpy_video_crop,
+        )
     raise ValueError(f"Unsupported input backend: {name}")

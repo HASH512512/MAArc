@@ -27,6 +27,33 @@ SinglePlay -> LoadChart -> FindStartOrRetry -> ExecuteTouch -> Finished
 
 The first version defaults to `scrcpy` for maximum compatibility.
 
+## Multiple ADB Devices
+
+When more than one Android device or emulator is connected, plain `adb` commands fail with errors such as:
+
+```text
+adb: error: failed to get feature set: more than one device/emulator
+adb.exe: more than one device/emulator
+```
+
+List available serials first:
+
+```powershell
+adb devices
+```
+
+Then set the target serial in the Maa pipeline custom params. MAArc forwards this value to its scrcpy controller as `adb -s <serial>`:
+
+```json
+"input_backend": "scrcpy",
+"frame_source": "scrcpy_video",
+"adb_serial": "127.0.0.1:16384"
+```
+
+Leave `adb_serial` empty to keep the old default behavior when exactly one device is connected.
+
+MaaFramework's own ADB controller is created by the Maa client/UI, not by the Python Agent. Per MaaFramework's control-method documentation, ADB screencap/input are selected by the framework controller. In multi-device setups, select the same target device in the Maa client/debugger device list as the serial configured above, especially when using `frame_source: "maa_screencap"` or `input_backend: "maa"`.
+
 ## Step 2: Agent Startup Test
 
 Install dependencies first:
