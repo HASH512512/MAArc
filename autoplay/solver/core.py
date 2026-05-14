@@ -61,6 +61,8 @@ PROFILE_4K = LaneProfile(name="4k")
 PROFILE_6K = LaneProfile(name="6k")
 ARC_POINTER_BASE = 5000
 SKY_WIDEN_Y_SCALE = 1.61
+GROUND_NOTE_Y = 0.0
+SAME_HEAD_EPS = 1e-4
 
 
 def _rotate_point(x: float, y: float, anglex: int, angley: int) -> tuple[float, float]:
@@ -106,8 +108,7 @@ def _project_ground_logical_coord_for_mode(
 ) -> tuple[float, float]:
     lane_ratio = timeline.lane_widen_ratio_at(tick)
     raw_x = _project_ground_lane_x_for_mode(lane, lane_ratio)
-    sky_ratio = timeline.sky_widen_ratio_at(tick)
-    return _project_arc_logical_coord_for_mode(raw_x, 0.0, sky_ratio)
+    return raw_x, GROUND_NOTE_Y
 
 
 def _arc_pointer_from_color(color: int) -> int:
@@ -147,9 +148,182 @@ def _project_arc_logical_coord_for_mode(
 
 
 def _is_same_logical_point(
-    left: LogicalTouchEvent, right: LogicalTouchEvent, eps: float = 1e-4
+    left: LogicalTouchEvent, right: LogicalTouchEvent, eps: float = SAME_HEAD_EPS
 ) -> bool:
     return abs(left.x - right.x) <= eps and abs(left.y - right.y) <= eps
+
+
+def _is_same_xy(
+    event: LogicalTouchEvent, x: float, y: float, eps: float = SAME_HEAD_EPS
+) -> bool:
+    return abs(event.x - x) <= eps and abs(event.y - y) <= eps
+
+
+def _is_real_playable_arc(note: object) -> bool:
+    return isinstance(note, ArcIR) and not note.trace_arc and note.end > note.start
+
+
+def _arc_time_overlaps(left: ArcIR, right: ArcIR) -> bool:
+    return max(left.start, right.start) < min(left.end, right.end)
+
+
+def _project_arc_note_at(
+    note: ArcIR,
+    tick: int,
+    timeline: ArcaeaTimelineAnalyzer,
+) -> tuple[float, float]:
+    delta = note.end - note.start
+    t = 0.0 if delta <= 0 else max(0.0, min(1.0, (tick - note.start) / delta))
+    start = (note.start_x, note.start_y, 1)
+    end = (note.end_x, note.end_y, 1)
+    px, py, _ = note.easing.value(start, end, t)
+    anglex = int(note.group_properties.get("anglex", 0))
+    angley = int(note.group_properties.get("angley", 0))
+    px, py = _rotate_point(px, py, anglex, angley)
+    sky_ratio = timeline.sky_widen_ratio_at(tick)
+    return _project_arc_logical_coord_for_mode(px, py, sky_ratio)
+
+
+def _arc_sample_ticks_for_note(
+    note: ArcIR,
+    timeline: ArcaeaTimelineAnalyzer,
+) -> list[int]:
+    ticks = set(_sample_arc_ticks(note.start, note.end, note.smoothness))
+    ticks.update(
+        tick for tick in timeline.sky_transition_ticks() if note.start <= tick <= note.end
+    )
+    return sorted(ticks)
+
+
+def _hidegroup_enabled_at(chart_ir: ArcaeaChartIR, group_id: int, tick: int) -> bool:
+    enabled = False
+    for control in chart_ir.scene_controls:
+        if control.group_id != group_id:
+            continue
+        if control.control_type != "hidegroup":
+            continue
+        if control.tick > tick:
+            continue
+        enabled = int(control.param2 or 0) == 1
+    return enabled
+
+
+def _is_hidegroup_arc(chart_ir: ArcaeaChartIR, note: ArcIR) -> bool:
+    if _hidegroup_enabled_at(chart_ir, note.group_id, note.start):
+        return True
+    return any(
+        control.group_id == note.group_id
+        and control.control_type == "hidegroup"
+        and note.start < control.tick < note.end
+        and int(control.param2 or 0) == 1
+        for control in chart_ir.scene_controls
+    )
+
+
+def _build_hidden_same_color_arc_components(chart_ir: ArcaeaChartIR) -> list[list[ArcIR]]:
+    arcs = [
+        note
+        for note in chart_ir.notes
+        if isinstance(note, ArcIR) and not note.trace_arc and note.end > note.start
+    ]
+    visible = [note for note in arcs if not _is_hidegroup_arc(chart_ir, note)]
+    hidden = [note for note in arcs if _is_hidegroup_arc(chart_ir, note)]
+    if not visible or not hidden:
+        return []
+
+    by_id: dict[int, ArcIR] = {note.note_id: note for note in visible + hidden}
+    graph: dict[int, set[int]] = {note_id: set() for note_id in by_id}
+    for hidden_arc in hidden:
+        for visible_arc in visible:
+            if hidden_arc.color != visible_arc.color:
+                continue
+            if not _arc_time_overlaps(hidden_arc, visible_arc):
+                continue
+            graph[hidden_arc.note_id].add(visible_arc.note_id)
+            graph[visible_arc.note_id].add(hidden_arc.note_id)
+
+    components: list[list[ArcIR]] = []
+    seen: set[int] = set()
+    for note_id, edges in graph.items():
+        if note_id in seen or not edges:
+            continue
+        stack = [note_id]
+        component_ids: set[int] = set()
+        while stack:
+            current = stack.pop()
+            if current in component_ids:
+                continue
+            component_ids.add(current)
+            stack.extend(graph[current] - component_ids)
+        seen.update(component_ids)
+        component = [by_id[item] for item in component_ids]
+        if any(_is_hidegroup_arc(chart_ir, note) for note in component) and any(
+            not _is_hidegroup_arc(chart_ir, note) for note in component
+        ):
+            components.append(sorted(component, key=lambda note: (note.start, note.end, note.note_id)))
+    return components
+
+
+def _append_merged_same_color_arc_component(
+    chart_ir: ArcaeaChartIR,
+    component: list[ArcIR],
+    timeline: ArcaeaTimelineAnalyzer,
+    append_event,
+) -> None:
+    if not component:
+        return
+    color = component[0].color
+    pointer = _arc_pointer_from_color(color)
+    start_tick = min(note.start for note in component)
+    end_tick = max(note.end for note in component)
+    primary = min(component, key=lambda note: (note.start, note.note_id))
+    end_primary = max(component, key=lambda note: (note.end, -note.note_id))
+
+    start_x, start_y = _project_arc_note_at(primary, start_tick, timeline)
+    append_event(start_tick, start_x, start_y, TouchAction.DOWN, pointer, primary.note_id, "arc")
+
+    candidate_ticks: set[int] = {start_tick, end_tick}
+    for note in component:
+        candidate_ticks.update(_arc_sample_ticks_for_note(note, timeline))
+    for left in component:
+        for right in component:
+            if left.note_id >= right.note_id:
+                continue
+            overlap_start = max(left.start, right.start)
+            overlap_end = min(left.end, right.end)
+            if overlap_start >= overlap_end:
+                continue
+            candidate_ticks.add(overlap_start)
+            candidate_ticks.add(overlap_end)
+            step = max(3, min(10, (overlap_end - overlap_start) // 4 or 10))
+            tick = overlap_start + step
+            while tick < overlap_end:
+                candidate_ticks.add(tick)
+                tick += step
+
+    last_active_note_id: int | None = None
+    for tick in sorted(candidate_ticks):
+        if tick in {start_tick, end_tick}:
+            continue
+        active = [note for note in component if note.start <= tick <= note.end]
+        if not active:
+            continue
+        active.sort(key=lambda note: (_is_hidegroup_arc(chart_ir, note), note.start, note.note_id))
+        chosen = active[0]
+        if len(active) > 1:
+            alternating = [note for note in active if note.note_id != last_active_note_id]
+            if alternating:
+                chosen = alternating[0]
+        x, y = _project_arc_note_at(chosen, tick, timeline)
+        append_event(tick, round(x, 4), round(y, 4), TouchAction.MOVE, pointer, chosen.note_id, "arc")
+        last_active_note_id = chosen.note_id
+
+    end_x, end_y = _project_arc_note_at(end_primary, end_tick, timeline)
+    append_event(end_tick, end_x, end_y, TouchAction.UP, pointer, end_primary.note_id, "arc")
+
+
+def _build_merged_arc_note_ids(components: list[list[ArcIR]]) -> set[int]:
+    return {note.note_id for component in components for note in component}
 
 
 def _resolve_same_tick_arc_head_arctap_conflicts(
@@ -204,6 +378,175 @@ def _resolve_same_tick_arc_head_arctap_conflicts(
     if not remove_indices:
         return events
     return [event for idx, event in enumerate(events) if idx not in remove_indices]
+
+
+def _find_matching_up_index(
+    events: list[LogicalTouchEvent], down_event: LogicalTouchEvent, default_duration: int
+) -> int | None:
+    target_tick = down_event.tick + default_duration
+    for idx, event in enumerate(events):
+        if event.action is not TouchAction.UP:
+            continue
+        if event.source_type != down_event.source_type:
+            continue
+        if event.pointer != down_event.pointer:
+            continue
+        if event.source_note_id != down_event.source_note_id:
+            continue
+        if event.tick != target_tick:
+            continue
+        return idx
+    return None
+
+
+def _resolve_same_head_arc_ground_conflicts(
+    events: list[LogicalTouchEvent],
+) -> list[LogicalTouchEvent]:
+    arc_downs = [
+        event
+        for event in events
+        if event.action is TouchAction.DOWN and event.source_type == "arc"
+    ]
+    if not arc_downs:
+        return events
+
+    remove_indices: set[int] = set()
+    inserted_events: list[LogicalTouchEvent] = []
+
+    for arc_down in arc_downs:
+        same_head_indices = [
+            idx
+            for idx, event in enumerate(events)
+            if event.action is TouchAction.DOWN
+            and event.tick == arc_down.tick
+            and event.source_type in {"arctap", "tap", "hold"}
+            and _is_same_logical_point(event, arc_down)
+        ]
+        if not same_head_indices:
+            continue
+
+        arc_events = [
+            event
+            for event in events
+            if event.source_type == "arc"
+            and event.source_note_id == arc_down.source_note_id
+            and event.pointer == arc_down.pointer
+        ]
+        if not arc_events:
+            continue
+
+        arc_end_tick = max(event.tick for event in arc_events)
+
+        for idx in same_head_indices:
+            head_event = events[idx]
+            if head_event.source_type == "arctap":
+                remove_indices.add(idx)
+                up_idx = _find_matching_up_index(events, head_event, 12)
+                if up_idx is not None:
+                    remove_indices.add(up_idx)
+                continue
+
+            if head_event.source_type == "tap":
+                remove_indices.add(idx)
+                up_idx = _find_matching_up_index(events, head_event, 20)
+                if up_idx is not None:
+                    remove_indices.add(up_idx)
+                continue
+
+            if head_event.source_type != "hold":
+                continue
+
+            hold_event_indices = [
+                event_idx
+                for event_idx, event in enumerate(events)
+                if event.source_type == "hold"
+                and event.source_note_id == head_event.source_note_id
+                and event.pointer == head_event.pointer
+            ]
+            hold_events = [events[event_idx] for event_idx in hold_event_indices]
+            if not hold_events:
+                continue
+
+            hold_end_tick = max(event.tick for event in hold_events)
+            hold_x, hold_y = head_event.x, head_event.y
+            arc_moves_away = any(
+                event.tick > head_event.tick and not _is_same_xy(event, hold_x, hold_y)
+                for event in arc_events
+            )
+
+            for event in hold_events:
+                event.pointer = arc_down.pointer
+            remove_indices.update(
+                event_idx
+                for event_idx in hold_event_indices
+                if events[event_idx].action in {TouchAction.DOWN, TouchAction.UP}
+            )
+
+            merged_end_tick = max(arc_end_tick, hold_end_tick)
+            arc_up_events = [event for event in arc_events if event.action is TouchAction.UP]
+            if arc_up_events:
+                for event in arc_up_events:
+                    event.tick = merged_end_tick
+            else:
+                inserted_events.append(
+                    LogicalTouchEvent(
+                        tick=merged_end_tick,
+                        x=arc_down.x,
+                        y=arc_down.y,
+                        action=TouchAction.UP,
+                        pointer=arc_down.pointer,
+                        source_note_id=arc_down.source_note_id,
+                        source_type="arc",
+                    )
+                )
+
+            if arc_moves_away:
+                for event in arc_events:
+                    event.pointer = arc_down.pointer
+                sorted_arc_events = sorted(arc_events, key=lambda item: item.tick)
+                restore_tick = head_event.tick + 20
+                while restore_tick < min(arc_end_tick, hold_end_tick):
+                    next_arc_event = next(
+                        (
+                            event
+                            for event in sorted_arc_events
+                            if event.tick >= restore_tick and event.action is not TouchAction.DOWN
+                        ),
+                        None,
+                    )
+                    inserted_events.append(
+                        LogicalTouchEvent(
+                            tick=restore_tick,
+                            x=hold_x,
+                            y=hold_y,
+                            action=TouchAction.MOVE,
+                            pointer=arc_down.pointer,
+                            source_note_id=head_event.source_note_id,
+                            source_type="hold_arc_return",
+                        )
+                    )
+                    if next_arc_event is not None:
+                        inserted_events.append(
+                            LogicalTouchEvent(
+                                tick=restore_tick + 1,
+                                x=next_arc_event.x,
+                                y=next_arc_event.y,
+                                action=TouchAction.MOVE,
+                                pointer=arc_down.pointer,
+                                source_note_id=arc_down.source_note_id,
+                                source_type="arc",
+                            )
+                        )
+                    restore_tick += 20
+
+    if not remove_indices and not inserted_events:
+        return events
+    resolved = [event for idx, event in enumerate(events) if idx not in remove_indices]
+    resolved.extend(inserted_events)
+    resolved.sort(
+        key=lambda item: (item.tick, item.pointer, ACTION_PRIORITY.get(item.action, 99))
+    )
+    return resolved
 
 
 def _resolve_connected_same_color_arc_boundaries(
@@ -283,6 +626,8 @@ def _build_logical_events(
 ) -> list[LogicalTouchEvent]:
     events: list[LogicalTouchEvent] = []
     arctap_pointer = 1000
+    merged_arc_components = _build_hidden_same_color_arc_components(chart_ir)
+    merged_arc_note_ids = _build_merged_arc_note_ids(merged_arc_components)
 
     def append_event(
         tick: int,
@@ -303,9 +648,14 @@ def _build_logical_events(
                 source_note_id=source_note_id,
                 source_type=source_type,
             )
-        )
+            )
+
+    for component in merged_arc_components:
+        _append_merged_same_color_arc_component(chart_ir, component, timeline, append_event)
 
     for note in chart_ir.notes:
+        if isinstance(note, ArcIR) and note.note_id in merged_arc_note_ids:
+            continue
         if note.noinput:
             continue
 
@@ -481,6 +831,7 @@ def _build_logical_events(
             if arctap_pointer > 2000:
                 arctap_pointer = 1000
 
+    events = _resolve_same_head_arc_ground_conflicts(events)
     events = _resolve_same_tick_arc_head_arctap_conflicts(events)
 
     events.sort(

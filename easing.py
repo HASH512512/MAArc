@@ -1,26 +1,43 @@
 from enum import Enum
 from functools import partial
 from math import pi, sin, cos
+from typing import Callable
 
-import numpy as np
+
+EasingFunction = Callable[
+    [tuple[float, float, float], tuple[float, float, float], float],
+    tuple[float, float, float],
+]
+
+
+class _EasingValue:
+    func: EasingFunction
+
+    def __init__(self, func: EasingFunction) -> None:
+        self.func = func
+
+    def __call__(
+        self, start: tuple[float, float, float], end: tuple[float, float, float], t: float
+    ) -> tuple[float, float, float]:
+        return self.func(start, end, t)
 
 
 def _easing_linear(
     start: tuple[float, float, float], end: tuple[float, float, float], t: float
 ) -> tuple[float, float, float]:
-    return tuple(np.array(np.asmatrix((1 - t, t)) @ np.asmatrix((start, end)))[0])
+    x0, y0, z0 = start
+    x1, y1, z1 = end
+    return x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t
 
 
 def _easing_cubic_bezier(
     start: tuple[float, float, float], end: tuple[float, float, float], t: float
 ) -> tuple[float, float, float]:
-    mult = np.eye(3) * (1 - t) * (1 + 2 * t)
-    mult[1, 1] = 1.0
-    start = (np.array(start) @ mult).tolist()
-    mult = np.eye(3) * t * (3 - 2 * t)
-    mult[1, 1] = 1
-    end = (np.array(end) @ mult).tolist()
-    return _easing_linear(start, end, t)
+    start_scale = (1 - t) * (1 + 2 * t)
+    end_scale = t * (3 - 2 * t)
+    curve_start = (start[0] * start_scale, start[1], start[2] * start_scale)
+    curve_end = (end[0] * end_scale, end[1], end[2] * end_scale)
+    return _easing_linear(curve_start, curve_end, t)
 
 
 def _easing_sinus(
@@ -48,14 +65,14 @@ def _easing_sinus(
 
 
 class Easing(Enum):
-    Linear = partial(_easing_linear)
-    CubicBezier = partial(_easing_cubic_bezier)
-    Si = partial(_easing_sinus, x="si")
-    SiSi = partial(_easing_sinus, x="si", z="si")
-    SiSo = partial(_easing_sinus, x="si", z="so")
-    So = partial(_easing_sinus, x="so")
-    SoSo = partial(_easing_sinus, x="so", z="so")
-    SoSi = partial(_easing_sinus, x="so", z="si")
+    Linear = _EasingValue(_easing_linear)
+    CubicBezier = _EasingValue(_easing_cubic_bezier)
+    Si = _EasingValue(partial(_easing_sinus, x="si"))
+    SiSi = _EasingValue(partial(_easing_sinus, x="si", z="si"))
+    SiSo = _EasingValue(partial(_easing_sinus, x="si", z="so"))
+    So = _EasingValue(partial(_easing_sinus, x="so"))
+    SoSo = _EasingValue(partial(_easing_sinus, x="so", z="so"))
+    SoSi = _EasingValue(partial(_easing_sinus, x="so", z="si"))
 
 
 if __name__ == "__main__":

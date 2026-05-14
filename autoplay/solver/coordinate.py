@@ -3,6 +3,29 @@ from __future__ import annotations
 import numpy as np
 
 
+def _homography_from_points(
+    source_points: list[tuple[float, float]],
+    target_points: list[tuple[float, float]],
+) -> np.ndarray:
+    if len(source_points) != 4 or len(target_points) != 4:
+        raise ValueError("Homography requires exactly four source and target points")
+
+    rows = []
+    values = []
+    for (src_x, src_y), (dst_x, dst_y) in zip(source_points, target_points):
+        rows.append([src_x, src_y, 1.0, 0.0, 0.0, 0.0, -dst_x * src_x, -dst_x * src_y])
+        values.append(dst_x)
+        rows.append([0.0, 0.0, 0.0, src_x, src_y, 1.0, -dst_y * src_x, -dst_y * src_y])
+        values.append(dst_y)
+
+    coeffs = np.linalg.solve(
+        np.array(rows, dtype=np.float64),
+        np.array(values, dtype=np.float64),
+    )
+    a, b, c, d, e, f, g, h = coeffs
+    return np.array(((a, b, c), (d, e, f), (g, h, 1.0))).T
+
+
 class CoordConv:
     trans_mat: np.ndarray
 
@@ -34,4 +57,19 @@ class CoordConv:
 
     def __call__(self, x: float, y: float) -> tuple[float, float]:
         x_, y_, z_ = np.array((x, y, 1)) @ self.trans_mat
+        return x_ / z_, y_ / z_
+
+
+class ProjectiveCoordConv:
+    trans_mat: np.ndarray
+
+    def __init__(
+        self,
+        source_points: list[tuple[float, float]],
+        target_points: list[tuple[float, float]],
+    ) -> None:
+        self.trans_mat = _homography_from_points(source_points, target_points)
+
+    def __call__(self, x: float, y: float) -> tuple[float, float]:
+        x_, y_, z_ = np.array((x, y, 1.0)) @ self.trans_mat
         return x_ / z_, y_ / z_
